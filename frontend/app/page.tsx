@@ -36,9 +36,9 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen md:p-8">
       <div className="mx-auto max-w-6xl space-y-8">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between max-md:flex-col gap-4">
           <div className="flex items-center gap-3">
             <Shield className="h-10 w-10 text-primary" />
             <div>

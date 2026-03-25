@@ -396,7 +396,7 @@ export default function VaultPage() {
 
               {/* Legal Acceptance Status */}
               <div className="space-y-2">
-                <div className="flex items-center gap-4 text-sm">
+                <div className="flex sm:items-center max-sm:flex-col gap-4 text-sm">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />
                     <span>Terms of Service:</span>

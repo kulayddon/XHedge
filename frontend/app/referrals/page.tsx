@@ -82,7 +82,7 @@ export default function ReferralsPage() {
             </p>
 
             <div className="flex items-center gap-2 p-3 rounded-md bg-muted border font-mono text-sm overflow-hidden">
-              <span className="flex-1 truncate">{referralLink}</span>
+              <span className="flex-1 truncate w-12 md:max-w-full">{referralLink}</span>
               <button
                 onClick={copyToClipboard}
                 className="p-2 rounded-md hover:bg-background transition-colors"
@@ -100,7 +100,7 @@ export default function ReferralsPage() {
           </div>
 
           {/* Statistics Summary */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-2 gap-4">
             <StatCard
               title="Total Referrals"
               value={data?.totalReferrals.toString() || "0"}
