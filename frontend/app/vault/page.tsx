@@ -148,11 +148,7 @@ export default function VaultPage() {
     }
 
     setLoading(true);
-    setStatus({ type: null, message: "" });
-    setSigningErrorMessage("");
-    setSigningStep("preparing");
-
-    const toastId = toast.loading("Processing deposit…");
+    const toastId = toast.loading("Processing deposit...");
     try {
       const passphrase = getNetworkPassphrase(network);
 
@@ -186,23 +182,15 @@ export default function VaultPage() {
         throw new Error(submitError || "Failed to submit transaction");
       }
 
-      toast.success(`Deposit successful! Tx: ${hash.slice(0, 8)}…`, { id: toastId });
-      setAmount("");
-      await loadVaultData();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Deposit failed", { id: toastId });
+      toast.success(`Deposit successful! Tx: ${hash.slice(0, 8)}...`, { id: toastId });
       setSigningStep("success");
-      setStatus({ type: "success", message: `Deposit successful! Transaction: ${hash.slice(0, 8)}...` });
       setAmount("");
       await loadVaultData();
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Deposit failed";
+      toast.error(msg, { id: toastId });
       setSigningErrorMessage(msg);
       setSigningStep("error");
-      setStatus({
-        type: "error",
-        message: msg,
-      });
     } finally {
       setLoading(false);
     }
@@ -221,11 +209,7 @@ export default function VaultPage() {
     }
 
     setLoading(true);
-    setStatus({ type: null, message: "" });
-    setSigningErrorMessage("");
-    setSigningStep("preparing");
-
-    const toastId = toast.loading("Processing withdrawal…");
+    const toastId = toast.loading("Processing withdrawal...");
     try {
       const passphrase = getNetworkPassphrase(network);
 
@@ -259,23 +243,15 @@ export default function VaultPage() {
         throw new Error(submitError || "Failed to submit transaction");
       }
 
-      toast.success(`Withdrawal successful! Tx: ${hash.slice(0, 8)}…`, { id: toastId });
-      setAmount("");
-      await loadVaultData();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Withdrawal failed", { id: toastId });
+      toast.success(`Withdrawal successful! Tx: ${hash.slice(0, 8)}...`, { id: toastId });
       setSigningStep("success");
-      setStatus({ type: "success", message: `Withdraw successful! Transaction: ${hash.slice(0, 8)}...` });
       setAmount("");
       await loadVaultData();
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Withdraw failed";
+      toast.error(msg, { id: toastId });
       setSigningErrorMessage(msg);
       setSigningStep("error");
-      setStatus({
-        type: "error",
-        message: msg,
-      });
     } finally {
       setLoading(false);
     }
