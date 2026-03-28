@@ -4,21 +4,24 @@ use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
+extern crate std;
+use std::vec::Vec as StdVec;
+
 fn setup_test_env() -> (Env, VolatilityShieldClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let contract_id = env.register_contract(None, VolatilityShield);
     let client = VolatilityShieldClient::new(&env, &contract_id);
-    
+
     let admin = Address::generate(&env);
     let asset = Address::generate(&env);
     let oracle = Address::generate(&env);
     let treasury = Address::generate(&env);
     let guardians = soroban_sdk::vec![&env, admin.clone()];
-    
+
     client.init(&admin, &asset, &oracle, &treasury, &0u32, &guardians, &1u32);
-    
+
     (env, client, admin, asset)
 }
 
@@ -44,7 +47,7 @@ proptest! {
         }
 
         assert_eq!(client.total_shares(), total_expected_shares);
-        
+
         // Verify individual balances sum to total_shares
         let mut sum_balances = 0i128;
         for user in users.iter() {
@@ -56,7 +59,7 @@ proptest! {
     #[test]
     fn test_conversion_invariants(amount in 1i128..1_000_000_000i128) {
         let (_env, client, _admin, _asset) = setup_test_env();
-        
+
         // Initial state
         assert_eq!(client.convert_to_shares(&amount), amount);
         assert_eq!(client.convert_to_assets(&amount), amount);
@@ -64,10 +67,10 @@ proptest! {
         // State with some growth
         client.set_total_assets(&2000);
         client.set_total_shares(&1000);
-        
+
         let shares = client.convert_to_shares(&amount);
         let assets_back = client.convert_to_assets(&shares);
-        
+
         // assets_back should be <= amount due to rounding down
         assert!(assets_back <= amount);
         // Loss should be minimal (less than 1 unit in this simple linear case)
@@ -84,7 +87,7 @@ proptest! {
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         let treasury = Address::generate(&env);
-        
+
         let token_admin = Address::generate(&env);
         let (token_id, stellar_asset_client, _token_client) = create_token_contract(&env, &token_admin);
 
@@ -93,12 +96,12 @@ proptest! {
 
         let user = Address::generate(&env);
         stellar_asset_client.mint(&user, &amount);
-        
-        client.deposit(&user, &amount);
+
+        client.deposit(&user, &token_id, &amount);
         let shares = client.balance(&user);
-        
+
         assert_eq!(client.total_shares(), shares);
-        
+
         client.withdraw(&user, &shares);
         assert_eq!(client.balance(&user), 0);
         assert_eq!(client.total_shares(), 0);

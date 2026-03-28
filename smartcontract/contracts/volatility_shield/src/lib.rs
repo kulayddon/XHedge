@@ -66,6 +66,9 @@ pub enum DataKey {
     PendingWithdrawals,
     StrategyHealth(Address),
     TimelockDuration,
+    AcceptedAssets,
+    AssetBalance(Address, Address), // (asset, user)
+    AssetTotalAssets(Address),      // total assets per asset type
 }
 
 // ─────────────────────────────────────────────
@@ -330,6 +333,92 @@ impl VolatilityShield {
         Ok(())
     }
 
+    // ── Multi-Asset Management ────────────────
+    /// Add a new accepted asset to the vault.
+    /// Only admin can call this function.
+    pub fn add_accepted_asset(env: Env, asset: Address) -> Result<(), Error> {
+        Self::require_admin(&env);
+        let mut accepted_assets: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AcceptedAssets)
+            .unwrap_or(Vec::new(&env));
+
+        // Check if asset already exists
+        if accepted_assets.contains(asset.clone()) {
+            return Ok(()); // Asset already accepted, no-op
+        }
+
+        accepted_assets.push_back(asset.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::AcceptedAssets, &accepted_assets);
+
+        // Initialize per-asset total for the new asset
+        env.storage()
+            .instance()
+            .set(&DataKey::AssetTotalAssets(asset.clone()), &0_i128);
+
+        env.events().publish((symbol_short!("AddAsset"),), asset);
+
+        Ok(())
+    }
+
+    /// Get the list of accepted assets.
+    pub fn get_accepted_assets(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::AcceptedAssets)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Check if an asset is accepted.
+    pub fn is_accepted_asset(env: Env, asset: Address) -> bool {
+        let accepted_assets: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AcceptedAssets)
+            .unwrap_or(Vec::new(&env));
+        accepted_assets.contains(asset)
+    }
+
+    /// Get the balance of a user in a specific asset.
+    pub fn get_asset_balance(env: Env, asset: Address, user: Address) -> i128 {
+        let asset_balance_key = DataKey::AssetBalance(asset, user);
+        env.storage()
+            .persistent()
+            .get(&asset_balance_key)
+            .unwrap_or(0)
+    }
+
+    /// Get the total assets deposited in a specific asset type.
+    pub fn get_asset_total(env: Env, asset: Address) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::AssetTotalAssets(asset))
+            .unwrap_or(0)
+    }
+
+    /// Get all per-asset totals (useful for multi-asset share price calculation).
+    pub fn get_all_asset_totals(env: Env) -> Vec<(Address, i128)> {
+        let accepted_assets: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AcceptedAssets)
+            .unwrap_or(Vec::new(&env));
+
+        let mut totals: Vec<(Address, i128)> = Vec::new(&env);
+        for asset in accepted_assets {
+            let total = env
+                .storage()
+                .instance()
+                .get(&DataKey::AssetTotalAssets(asset.clone()))
+                .unwrap_or(0);
+            totals.push_back((asset, total));
+        }
+        totals
+    }
+
     fn execute_action(env: &Env, action: &ActionType, proposed_at: u64) -> Result<(), Error> {
         // Check if timelock has elapsed
         Self::assert_timelock_elapsed(env, proposed_at)?;
@@ -408,13 +497,21 @@ impl VolatilityShield {
             .instance()
             .set(&DataKey::Strategies, &Vec::<Address>::new(&env));
         env.storage().instance().set(&DataKey::Treasury, &treasury);
-        env.storage().instance().set(&DataKey::FeePercentage, &fee_percentage);
+        env.storage()
+            .instance()
+            .set(&DataKey::FeePercentage, &fee_percentage);
         env.storage().instance().set(&DataKey::Token, &asset);
 
         // Initialize maps and durations
-        env.storage().instance().set(&DataKey::Proposals, &Map::<u64, Proposal>::new(&env));
-        env.storage().instance().set(&DataKey::TimelockDuration, &0_u64);
-        env.storage().instance().set(&DataKey::NextProposalId, &1_u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::Proposals, &Map::<u64, Proposal>::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::TimelockDuration, &0_u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextProposalId, &1_u64);
 
         // Initialize vault state to zero
         env.storage().instance().set(&DataKey::TotalAssets, &0_i128);
@@ -436,16 +533,29 @@ impl VolatilityShield {
             .instance()
             .set(&DataKey::Threshold, &threshold);
 
+        // Multi-asset initialization: accept the primary asset by default
+        let mut accepted_assets = Vec::new(&env);
+        accepted_assets.push_back(asset.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::AcceptedAssets, &accepted_assets);
+
+        // Initialize per-asset total for the primary asset
+        env.storage()
+            .instance()
+            .set(&DataKey::AssetTotalAssets(asset), &0_i128);
+
         Ok(())
     }
 
     // ── Deposit ───────────────────────────────
     /// Deposit assets into the vault.
-    ///
+    /// If asset is not the default/primary asset, it must be in the accepted assets list.
     /// The user will receive shares in return, proportional to the current share price.
     /// @param from The address of the user depositing.
+    /// @param asset The address of the asset being deposited.
     /// @param amount The amount of assets to deposit.
-    pub fn deposit(env: Env, from: Address, amount: i128) {
+    pub fn deposit(env: Env, from: Address, asset: Address, amount: i128) {
         Self::check_version(&env, 1);
         Self::assert_not_paused(&env);
         if amount <= 0 {
@@ -453,18 +563,28 @@ impl VolatilityShield {
         }
         from.require_auth();
 
-        let token: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .expect("Token not initialized");
-        token::Client::new(&env, &token).transfer(&from, &env.current_contract_address(), &amount);
+        // Verify asset is accepted
+        if !Self::is_accepted_asset(env.clone(), asset.clone()) {
+            panic!("asset not accepted");
+        }
+
+        // Transfer the asset from user to contract
+        token::Client::new(&env, &asset).transfer(&from, &env.current_contract_address(), &amount);
 
         let shares_to_mint = Self::convert_to_shares(env.clone(), amount);
 
+        // Track per-asset user balance
+        let asset_balance_key = DataKey::AssetBalance(asset.clone(), from.clone());
+        let current_asset_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&asset_balance_key)
+            .unwrap_or(0);
+        let new_asset_balance = current_asset_balance.checked_add(shares_to_mint).unwrap();
+
+        // Also track total user balance (for backward compatibility)
         let balance_key = DataKey::Balance(from.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
-
         let new_user_balance = current_balance.checked_add(shares_to_mint).unwrap();
 
         // --- Deposit Caps Validation ---
@@ -498,9 +618,26 @@ impl VolatilityShield {
         }
         // -------------------------------
 
+        // Update per-asset balance
+        env.storage()
+            .persistent()
+            .set(&asset_balance_key, &new_asset_balance);
+
+        // Update total user balance
         env.storage()
             .persistent()
             .set(&balance_key, &new_user_balance);
+
+        // Update per-asset total assets
+        let asset_total: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AssetTotalAssets(asset.clone()))
+            .unwrap_or(0);
+        let new_asset_total = asset_total.checked_add(amount).unwrap();
+        env.storage()
+            .instance()
+            .set(&DataKey::AssetTotalAssets(asset.clone()), &new_asset_total);
 
         let total_shares = Self::total_shares(&env);
         let new_total_shares = total_shares.checked_add(shares_to_mint).unwrap();
@@ -512,8 +649,9 @@ impl VolatilityShield {
         let share_price = Self::get_share_price(&env);
 
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "Deposit"), from),
+            (soroban_sdk::Symbol::new(&env, "Deposit"), from.clone()),
             (
+                asset.clone(),
                 amount,
                 share_price,
                 new_total_assets,
@@ -601,12 +739,7 @@ impl VolatilityShield {
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "Withdraw"), from),
-            (
-                shares,
-                share_price,
-                new_total_assets,
-                new_total_shares,
-            ),
+            (shares, share_price, new_total_assets, new_total_shares),
         );
     }
 
@@ -672,7 +805,10 @@ impl VolatilityShield {
         let share_price = Self::get_share_price(&env);
 
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "WithdrawQueued"), from.clone()),
+            (
+                soroban_sdk::Symbol::new(&env, "WithdrawQueued"),
+                from.clone(),
+            ),
             (shares, share_price, total_assets, total_shares),
         );
     }
@@ -855,10 +991,8 @@ impl VolatilityShield {
         let max_staleness = Self::max_staleness(env);
 
         if now > last_update.saturating_add(max_staleness) {
-            env.events().publish(
-                (soroban_sdk::Symbol::new(env, "OracleStale"),),
-                last_update,
-            );
+            env.events()
+                .publish((soroban_sdk::Symbol::new(env, "OracleStale"),), last_update);
             return Err(Error::StaleOracleData);
         }
 
@@ -885,7 +1019,7 @@ impl VolatilityShield {
         for (strategy_addr, bps_allocation) in allocations.iter() {
             let strategy = StrategyClient::new(&env, strategy_addr.clone());
             let current_balance = strategy.balance();
-            
+
             // Convert BPS to absolute target allocation
             let target_allocation = total_assets
                 .checked_mul(bps_allocation)
@@ -1073,10 +1207,8 @@ impl VolatilityShield {
         };
         env.storage().instance().set(&health_key, &default_health);
 
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "StrategyAdded"),),
-            strategy,
-        );
+        env.events()
+            .publish((soroban_sdk::Symbol::new(&env, "StrategyAdded"),), strategy);
 
         Ok(())
     }
@@ -1226,7 +1358,10 @@ impl VolatilityShield {
 
         // Emit StrategyFlagged event
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "StrategyFlagged"), strategy.clone()),
+            (
+                soroban_sdk::Symbol::new(&env, "StrategyFlagged"),
+                strategy.clone(),
+            ),
             current_time,
         );
 
@@ -1280,7 +1415,10 @@ impl VolatilityShield {
         let total_assets_after = Self::total_assets(&env);
         let total_shares_after = Self::total_shares(&env);
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "StrategyRemoved"), strategy.clone()),
+            (
+                soroban_sdk::Symbol::new(&env, "StrategyRemoved"),
+                strategy.clone(),
+            ),
             (strategy_balance, total_assets_after, total_shares_after),
         );
 
@@ -1539,10 +1677,8 @@ impl VolatilityShield {
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
         Self::require_admin(&env);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "ContractUpgraded"),),
-            (),
-        );
+        env.events()
+            .publish((soroban_sdk::Symbol::new(&env, "ContractUpgraded"),), ());
     }
 
     pub fn migrate(env: Env, new_version: u32) {
@@ -1631,6 +1767,6 @@ impl VolatilityShield {
     }
 }
 
-mod test;
 #[cfg(test)]
 mod invariants;
+mod test;

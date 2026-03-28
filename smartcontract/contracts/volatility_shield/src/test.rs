@@ -232,7 +232,7 @@ fn test_deposit_success() {
     let deposit_amount = 1000;
     stellar_asset_client.mint(&user, &deposit_amount);
 
-    client.deposit(&user, &deposit_amount);
+    client.deposit(&user, &token_id, &deposit_amount);
 
     assert_eq!(client.balance(&user), 1000);
     assert_eq!(client.total_assets(), 1000);
@@ -1222,7 +1222,7 @@ fn test_withdrawal_queue_full_lifecycle() {
 
     // 3. Queue again (user has 500 shares now)
     client.queue_withdraw(&user, &300);
-    assert_eq!(client.balance(&user), 200); 
+    assert_eq!(client.balance(&user), 200);
     assert_eq!(client.get_pending_withdrawals().len(), 1);
 
     // 4. Process withdrawal — process_queued_withdrawals does NOT reduce user balance (already deducted)
@@ -1502,7 +1502,6 @@ fn test_partially_unregistered_allocation_rejected() {
     assert_eq!(result, Err(Ok(Error::ZeroAddressStrategy)));
 }
 
-
 // ── Withdrawal Queue Invariant Tests ─────────────────────────
 
 #[test]
@@ -1520,11 +1519,13 @@ fn test_queue_withdraw_prevents_double_spending() {
     let oracle = Address::generate(&env);
     let treasury = Address::generate(&env);
     let guardians = soroban_sdk::vec![&env, admin.clone()];
-    client.init(&admin, &token_id, &oracle, &treasury, &0u32, &guardians, &1u32);
+    client.init(
+        &admin, &token_id, &oracle, &treasury, &0u32, &guardians, &1u32,
+    );
 
     let user = Address::generate(&env);
     stellar_asset_client.mint(&user, &1000);
-    client.deposit(&user, &1000);
+    client.deposit(&user, &token_id, &1000);
 
     // Set threshold so 600 triggers queue
     client.set_withdraw_queue_threshold(&500);
@@ -1555,11 +1556,13 @@ fn test_cancel_queued_withdrawal_restores_balance() {
     let oracle = Address::generate(&env);
     let treasury = Address::generate(&env);
     let guardians = soroban_sdk::vec![&env, admin.clone()];
-    client.init(&admin, &token_id, &oracle, &treasury, &0u32, &guardians, &1u32);
+    client.init(
+        &admin, &token_id, &oracle, &treasury, &0u32, &guardians, &1u32,
+    );
 
     let user = Address::generate(&env);
     stellar_asset_client.mint(&user, &1000);
-    client.deposit(&user, &1000);
+    client.deposit(&user, &token_id, &1000);
 
     client.set_withdraw_queue_threshold(&500);
     client.withdraw(&user, &600);
@@ -1610,7 +1613,7 @@ fn test_deposit_while_paused_fails() {
 
     client.set_paused(&true);
     let user = Address::generate(&env);
-    client.deposit(&user, &100);
+    client.deposit(&user, &asset, &100);
 }
 
 #[test]
@@ -1627,7 +1630,7 @@ fn test_deposit_zero_fails() {
     let guardians = soroban_sdk::vec![&env, admin.clone()];
     client.init(&admin, &asset, &oracle, &treasury, &0u32, &guardians, &1u32);
 
-    client.deposit(&Address::generate(&env), &0);
+    client.deposit(&Address::generate(&env), &asset, &0);
 }
 
 #[test]
@@ -1649,7 +1652,7 @@ fn test_withdraw_cap_exceeded() {
     client.set_total_assets(&1000);
     let user = Address::generate(&env);
     client.set_balance(&user, &200);
-    
+
     // Attempt withdrawal of 150 which exceeds cap of 100
     client.withdraw(&user, &150);
 }
@@ -1669,13 +1672,13 @@ fn test_stale_oracle_data_rejected() {
 
     client.set_max_staleness(&60); // 1 minute
     env.ledger().set_timestamp(1000);
-    
+
     let allocations: Map<Address, i128> = Map::new(&env);
     client.set_oracle_data(&allocations, &1000);
-    
+
     // Advance time beyond staleness (e.g., to 1100)
     env.ledger().set_timestamp(1100);
-    
+
     // Try to rebalance - should fail with StaleOracleData
     let res = client.try_propose_action(&oracle, &ActionType::Rebalance(50));
     assert!(res.is_err());
@@ -1689,7 +1692,15 @@ fn test_multisig_already_approved_rejected() {
     let client = VolatilityShieldClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardians = soroban_sdk::vec![&env, admin.clone()];
-    client.init(&admin, &Address::generate(&env), &Address::generate(&env), &Address::generate(&env), &0, &guardians, &2);
+    client.init(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &0,
+        &guardians,
+        &2,
+    );
 
     let id = client.propose_action(&admin, &ActionType::SetPaused(true));
     let result = client.try_approve_action(&admin, &id);
@@ -1704,7 +1715,15 @@ fn test_multisig_proposal_not_found() {
     let client = VolatilityShieldClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     let guardians = soroban_sdk::vec![&env, admin.clone()];
-    client.init(&admin, &Address::generate(&env), &Address::generate(&env), &Address::generate(&env), &0, &guardians, &1);
+    client.init(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &0,
+        &guardians,
+        &1,
+    );
 
     let result = client.try_approve_action(&admin, &999);
     assert_eq!(result, Err(Ok(Error::ProposalNotFound)));
