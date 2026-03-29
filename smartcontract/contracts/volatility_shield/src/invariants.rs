@@ -5,7 +5,6 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
 extern crate std;
-use std::vec::Vec as StdVec;
 
 fn setup_test_env() -> (Env, VolatilityShieldClient<'static>, Address, Address) {
     let env = Env::default();
@@ -34,11 +33,11 @@ proptest! {
     ) {
         let (env, client, _admin, _asset) = setup_test_env();
         let mut total_expected_shares = 0i128;
-        let mut users = soroban_sdk::Vec::new(&env);
+        let mut users = std::vec::Vec::new();
 
         for amount in amounts {
             let user = Address::generate(&env);
-            users.push_back(user.clone());
+            users.push(user.clone());
             client.set_total_assets(&(client.total_assets() + amount));
             let shares = client.convert_to_shares(&amount);
             client.set_balance(&user, &shares);
